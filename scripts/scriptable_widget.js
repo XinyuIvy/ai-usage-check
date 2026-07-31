@@ -1,15 +1,44 @@
 // AI Usage Widget (Scriptable) — Medium (compact) + Large (full-height, absolute reset times)
 // Setup: 1) Install the free "Scriptable" app from the App Store
 //        2) Create a new script and paste this entire file
-//        3) Change SERVER below to your computer's address
+//        3) Run the script once and enter the stable Tailscale URL printed by install.sh
 //        4) Long-press home screen -> add widget -> Scriptable -> Medium or Large
-//        5) Edit widget: Script = this script, When Interacting = Open URL (your SERVER address)
+//        5) Select this script. The saved URL is reused automatically.
 
-const SERVER = "http://YOUR-COMPUTER-IP:8899";   // <- change to your computer's IP
+const SERVER_KEY = "ai-usage-dashboard-server";
+
+// Save the server URL once instead of editing this file whenever networks change.
+async function configuredServer() {
+  const parameter = String(args.widgetParameter || "").trim();
+  if (parameter) {
+    Keychain.set(SERVER_KEY, parameter.replace(/\/$/, ""));
+    return parameter.replace(/\/$/, "");
+  }
+  if (Keychain.contains(SERVER_KEY)) return Keychain.get(SERVER_KEY);
+  if (config.runsInApp) {
+    const prompt = new Alert();
+    prompt.title = "Connect AI Usage";
+    prompt.message = "Enter the stable Tailscale URL printed by install.sh, for example http://100.64.0.1:8899";
+    prompt.addTextField("http://100.x.x.x:8899");
+    prompt.addAction("Save");
+    prompt.addCancelAction("Cancel");
+    if (await prompt.present() === 0) {
+      const value = prompt.textFieldValue(0).trim().replace(/\/$/, "");
+      if (value) {
+        Keychain.set(SERVER_KEY, value);
+        return value;
+      }
+    }
+  }
+  return null;
+}
+
+const SERVER = await configuredServer();
 
 // ---------- fetch ----------
 let data = null, offline = false;
 try {
+  if (!SERVER) throw new Error("Server is not configured");
   const req = new Request(SERVER + "/api/usage");
   req.timeoutInterval = 15;
   data = await req.loadJSON();
@@ -124,7 +153,7 @@ function verdict() {
 const w = new ListWidget();
 w.backgroundColor = C.bg;
 w.setPadding(15, 16, 13, 16);
-w.url = SERVER;
+if (SERVER) w.url = SERVER;
 w.refreshAfterDate = new Date(Date.now() + 15 * 60 * 1000);
 
 const title = w.addStack();
@@ -144,7 +173,9 @@ if (offline || !data) {
   const e = w.addText("Can't reach the dashboard on your computer");
   e.font = Font.systemFont(12);
   e.textColor = C.warn;
-  const h = w.addText("Check: computer is on, phone is on the same\nWi-Fi, and SERVER address in this script is correct");
+  const h = w.addText(SERVER
+    ? "Check that the computer and Tailscale are online"
+    : "Open this script once in Scriptable to save the Tailscale URL");
   h.font = Font.systemFont(10);
   h.textColor = C.muted;
   w.addSpacer();
