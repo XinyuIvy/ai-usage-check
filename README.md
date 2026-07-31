@@ -24,9 +24,9 @@ All four read from the same local server, so they always agree.
 ## Quick start
 
 ```bash
-git clone https://github.com/YOUR-USERNAME/ai-usage-dashboard.git
-cd ai-usage-dashboard
-./install.sh
+git clone https://github.com/XinyuIvy/ai-usage-check.git
+cd ai-usage-check
+bash install.sh
 ```
 
 This will:
@@ -54,9 +54,10 @@ Cards refresh automatically; no need to restart the server after logging in.
 
 1. Install **Scriptable** from the App Store
 2. Create a new script, paste in `scripts/scriptable_widget.js`
-3. Change the `SERVER` constant at the top to your computer's IP (find it with `ipconfig getifaddr en0`) or your [Tailscale](#viewing-it-away-from-home) address
+3. Run the script once inside Scriptable and enter the stable Tailscale URL printed by `install.sh`
 4. Long-press your home screen → add widget → Scriptable → Medium or Large → pick your script
-5. Edit the widget: set **When Interacting** to *Open URL* with your same server address, so tapping it opens the full dashboard
+
+The URL is saved in the iPhone Keychain and reused automatically. Tapping the widget opens the full dashboard. You do not need to scan a QR code again or edit the script after changing Wi-Fi.
 
 ### Menu bar (macOS + SwiftBar)
 
@@ -78,7 +79,7 @@ Just open `http://127.0.0.1:8899` (or your phone-accessible address) in a browse
 
 Since the server only runs on your machine, your phone needs to reach that machine's IP — which normally means "same Wi-Fi." Two ways around that:
 
-- **[Tailscale](https://tailscale.com)** (recommended, free): install on your computer and phone, log in with the same account. Your computer gets a stable `100.x.x.x` address that works from anywhere (as long as the computer is on). Use that address instead of the local IP in the widget configs.
+- **[Tailscale](https://tailscale.com)** (recommended, free): install it on the computer and phone and log in with the same account once. The computer gets a stable `100.x.x.x` address that works across home Wi-Fi, other Wi-Fi networks, and cellular data (as long as the computer is on). `install.sh` detects and prints this stable URL; enter it once when Scriptable first runs. No repeated QR scan or IP update is needed.
 - **DHCP reservation**: if you only ever move between a couple of known Wi-Fi networks, give your computer a fixed IP on each router instead.
 
 ## How the data flows
