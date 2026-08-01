@@ -1,35 +1,113 @@
 #!/usr/bin/env bash
-# Installs the AI Usage Dashboard as a background service (macOS launchd).
-# Run this from inside the repo folder: ./install.sh
+# One-command installer for AI Usage Dashboard on macOS.
 set -euo pipefail
 
-REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PLIST_DST="$HOME/Library/LaunchAgents/com.aiusage.dashboard.plist"
+REPO="XinyuIvy/ai-usage-check"
+CCLIMITS_REF="922ddac93894139da24ba6cf25de1f2f39f96543"
+APP_DIR="${AI_USAGE_HOME:-$HOME/.local/share/ai-usage-check}"
+BIN_DIR="$HOME/.local/bin"
+PLIST_DIR="$HOME/Library/LaunchAgents"
+SERVICE_PLIST="$PLIST_DIR/com.aiusage.dashboard.plist"
+UPDATE_PLIST="$PLIST_DIR/com.aiusage.update.plist"
+PORT="${AI_USAGE_PORT:-8899}"
+SOURCE_DIR=""
 
-echo "Repo directory: $REPO_DIR"
-
-# 1. Fetch cclimits if it's not already vendored
-if [ ! -f "$REPO_DIR/cclimits.py" ]; then
-  echo "Downloading cclimits.py ..."
-  curl -fsSL -o "$REPO_DIR/cclimits.py" \
-    https://raw.githubusercontent.com/cruzanstx/cclimits/main/lib/cclimits.py
+if [ "${1:-}" = "--source" ]; then
+  SOURCE_DIR="${2:?--source requires a directory}"
+else
+  SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || true)"
 fi
 
-# 2. Render the LaunchAgent plist with the real install path
-#    (macOS background services can't reliably read Documents/Desktop,
-#    so this repo should NOT live under ~/Documents or ~/Desktop.)
-sed "s|__INSTALL_DIR__|$REPO_DIR|g" \
-  "$REPO_DIR/com.aiusage.dashboard.plist.template" > "$PLIST_DST"
+# When piped from curl there are no adjacent project files, so fetch a clean release copy.
+if [ ! -f "$SOURCE_DIR/server.py" ]; then
+  temp_dir="$(mktemp -d)"
+  trap 'rm -rf "$temp_dir"' EXIT
+  echo "Downloading AI Usage Dashboard ..."
+  curl -fsSL "https://github.com/$REPO/archive/refs/heads/main.tar.gz" | tar -xz -C "$temp_dir"
+  exec bash "$temp_dir/ai-usage-check-main/install.sh" --source "$temp_dir/ai-usage-check-main"
+fi
 
-# 3. (Re)load the service
-launchctl unload "$PLIST_DST" 2>/dev/null || true
-launchctl load "$PLIST_DST"
+if [ "$(uname -s)" != "Darwin" ]; then
+  echo "The automated installer currently supports macOS only."
+  exit 1
+fi
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "Python 3 is required. Install it, then run this command again."
+  exit 1
+fi
 
-sleep 1
+echo "Installing to $APP_DIR"
+mkdir -p "$APP_DIR" "$BIN_DIR" "$PLIST_DIR"
+if [ "$SOURCE_DIR" != "$APP_DIR" ]; then
+  tar -C "$SOURCE_DIR" --exclude=.git --exclude=cclimits.py -cf - . | tar -C "$APP_DIR" -xf -
+fi
+
+# Keep the collector local. Existing copies are preserved during normal reinstalls.
+if [ ! -f "$APP_DIR/cclimits.py" ]; then
+  echo "Downloading quota collector ..."
+  curl -fsSL -o "$APP_DIR/cclimits.py" \
+    "https://raw.githubusercontent.com/cruzanstx/cclimits/$CCLIMITS_REF/lib/cclimits.py"
+fi
+
+python_bin="$(command -v python3)"
+cat > "$SERVICE_PLIST" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.aiusage.dashboard</string>
+  <key>ProgramArguments</key><array><string>$python_bin</string><string>$APP_DIR/server.py</string></array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>/tmp/ai-usage-dashboard.log</string>
+  <key>StandardErrorPath</key><string>/tmp/ai-usage-dashboard.err</string>
+</dict></plist>
+PLIST
+
+chmod +x "$APP_DIR/bin/ai-usage-check" "$APP_DIR/scripts/install_widget.sh" "$APP_DIR/uninstall.sh"
+ln -sfn "$APP_DIR/bin/ai-usage-check" "$BIN_DIR/ai-usage-check"
+
+cat > "$UPDATE_PLIST" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.aiusage.update</string>
+  <key>ProgramArguments</key><array><string>$BIN_DIR/ai-usage-check</string><string>update</string></array>
+  <key>StartInterval</key><integer>86400</integer>
+  <key>StandardOutPath</key><string>/tmp/ai-usage-update.log</string>
+  <key>StandardErrorPath</key><string>/tmp/ai-usage-update.err</string>
+</dict></plist>
+PLIST
+
+launchctl unload "$SERVICE_PLIST" 2>/dev/null || true
+launchctl load "$SERVICE_PLIST"
+if [ "${AI_USAGE_UPDATING:-0}" != "1" ]; then
+  launchctl unload "$UPDATE_PLIST" 2>/dev/null || true
+  launchctl load "$UPDATE_PLIST"
+fi
+
+sleep 2
+phone_url=""
+if command -v tailscale >/dev/null 2>&1 && tailscale status >/dev/null 2>&1; then
+  serve_output="$(tailscale serve --bg "$PORT" 2>&1 || true)"
+  phone_url="$(tailscale status --json 2>/dev/null | python3 -c '
+import json,sys
+try:
+ name=json.load(sys.stdin).get("Self", {}).get("DNSName", "").rstrip(".")
+ print("https://" + name if name else "")
+except Exception: print("")
+' || true)"
+fi
+
 echo ""
-echo "Installed and started."
-echo "  On this Mac:   http://127.0.0.1:8899"
-echo "  On your phone: http://$(ipconfig getifaddr en0 2>/dev/null || echo '<your-computer-ip>'):8899   (same Wi-Fi)"
+echo "Installed. Local dashboard: http://127.0.0.1:$PORT"
+if [ -n "$phone_url" ]; then
+  echo "Private phone URL: $phone_url"
+  "$APP_DIR/scripts/install_widget.sh" || true
+else
+  echo "For automatic phone setup, install and sign in to Tailscale, then run:"
+  echo "  $BIN_DIR/ai-usage-check restart"
+  echo "  $BIN_DIR/ai-usage-check widget"
+fi
 echo ""
-echo "Logs: /tmp/ai-usage-dashboard.log and /tmp/ai-usage-dashboard.err"
-echo "To uninstall: launchctl unload $PLIST_DST && rm $PLIST_DST"
+echo "Run diagnostics: $BIN_DIR/ai-usage-check doctor"
+echo "If the command is not found, add $BIN_DIR to PATH or use the full path above."

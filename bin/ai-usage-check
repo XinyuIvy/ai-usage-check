@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+# Manage, diagnose, and update AI Usage Dashboard.
+set -euo pipefail
+
+APP_DIR="${AI_USAGE_HOME:-$HOME/.local/share/ai-usage-check}"
+PLIST="$HOME/Library/LaunchAgents/com.aiusage.dashboard.plist"
+PORT="${AI_USAGE_PORT:-8899}"
+
+usage() {
+  echo "Usage: ai-usage-check {status|doctor|open|restart|update|widget|logs|uninstall}"
+}
+
+service_running() {
+  curl -fsS --max-time 4 "http://127.0.0.1:$PORT/api/usage" >/dev/null 2>&1
+}
+
+server_url() {
+  if command -v tailscale >/dev/null 2>&1; then
+    tailscale status --json 2>/dev/null | python3 -c '
+import json,sys
+try:
+ d=json.load(sys.stdin)
+ name=d.get("Self", {}).get("DNSName", "").rstrip(".")
+ print("https://" + name if name else "")
+except Exception: print("")
+'
+  fi
+}
+
+case "${1:-}" in
+  status)
+    if service_running; then echo "AI Usage is running."; else echo "AI Usage is not reachable."; exit 1; fi
+    url="$(server_url || true)"; [ -n "$url" ] && echo "Phone URL: $url"
+    ;;
+  doctor)
+    failures=0
+    check() { if "$@" >/dev/null 2>&1; then echo "✓ $*"; else echo "✗ $*"; failures=$((failures+1)); fi; }
+    check command -v python3
+    check test -f "$APP_DIR/server.py"
+    check test -f "$PLIST"
+    check service_running
+    check command -v tailscale
+    check tailscale status
+    if service_running; then
+      curl -fsS --max-time 10 "http://127.0.0.1:$PORT/api/usage" | python3 -c '
+import json,sys
+d=json.load(sys.stdin)
+for key in ("claude","codex","antigravity"):
+ value=d.get(key, {})
+ print(("✓" if value and not value.get("error") else "!") + " " + key)
+' || failures=$((failures+1))
+    fi
+    [ "$failures" -eq 0 ] || exit 1
+    ;;
+  open) open "http://127.0.0.1:$PORT" ;;
+  restart)
+    launchctl unload "$PLIST" 2>/dev/null || true
+    launchctl load "$PLIST"
+    ;;
+  update)
+    tmp="$(mktemp -d)"
+    trap 'rm -rf "$tmp"' EXIT
+    curl -fsSL "https://github.com/XinyuIvy/ai-usage-check/archive/refs/heads/main.tar.gz" | tar -xz -C "$tmp"
+    AI_USAGE_UPDATING=1 bash "$tmp/ai-usage-check-main/install.sh" --source "$tmp/ai-usage-check-main"
+    ;;
+  widget)
+    bash "$APP_DIR/scripts/install_widget.sh"
+    ;;
+  logs) tail -n 100 /tmp/ai-usage-dashboard.err ;;
+  uninstall) bash "$APP_DIR/uninstall.sh" ;;
+  *) usage; exit 2 ;;
+esac

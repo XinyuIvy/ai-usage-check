@@ -27,8 +27,8 @@ internet.
 from __future__ import annotations
 
 import json
+import os
 import shutil
-import socket
 import subprocess
 import sys
 import threading
@@ -36,7 +36,8 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-PORT = 8899
+PORT = int(os.environ.get("AI_USAGE_PORT", "8899"))
+BIND_HOST = os.environ.get("AI_USAGE_BIND", "127.0.0.1")
 CACHE_TTL = 300  # seconds; manual Refresh on the page forces a fresh query
 PROVIDERS_ARGS = ["--claude", "--codex", "--antigravity"]
 
@@ -120,6 +121,9 @@ def collect(force: bool = False) -> dict:
                 capture_output=True, text=True, timeout=90,
                 env=_collector_env(),
             )
+            if proc.returncode != 0:
+                detail = proc.stderr.strip().splitlines()[-1] if proc.stderr.strip() else "unknown error"
+                raise RuntimeError(f"cclimits exited with status {proc.returncode}: {detail}")
             raw = proc.stdout.strip()
             # npx may mix install logs into first run; take from the first '{'
             idx = raw.find("{")
@@ -219,6 +223,11 @@ const BRANDS = {
   codex:{name:"Codex / ChatGPT", sub:"Codex quota on your ChatGPT plan", color:"#9cc4ff", mark:"G"},
   gemini:{name:"Gemini (Antigravity)", sub:"Per-model quota, agy CLI", color:"#7ee0c0", mark:"✦"},
 };
+function esc(value){
+  return String(value ?? "").replace(/[&<>\"']/g, ch => ({
+    "&":"&amp;", "<":"&lt;", ">":"&gt;", "\"":"&quot;", "'":"&#39;"
+  })[ch]);
+}
 function pct(s){ const n=parseFloat(String(s||"").replace("%","")); return isNaN(n)?null:n; }
 function fmtReset(s){
   if(!s) return null;
@@ -234,7 +243,7 @@ function bar(label, remainStr, resetStr){
   const r = pct(remainStr);
   const w = r==null?0:Math.max(1.5,Math.min(100,r));
   return `<div class="row">
-    <div class="rowtop"><span class="rlabel">${label}</span>
+    <div class="rowtop"><span class="rlabel">${esc(label)}</span>
       <span class="rpct" style="color:${color(r??0)}">${r==null?"—":r.toFixed(1)+"%"} left</span></div>
     <div class="bar"><div class="fill" style="width:${w}%;background:${color(r??0)}"></div></div>
     ${resetStr?`<div class="reset">resets in ${fmtReset(resetStr)}</div>`:""}
@@ -259,7 +268,7 @@ function renderClaude(d){
 function renderCodex(d){
   if(d.error) return errBody(d);
   let h=staleNote(d);
-  if(d.plan) h+=`<div class="hint" style="margin:-4px 0 2px">Plan: ${d.plan}</div>`;
+  if(d.plan) h+=`<div class="hint" style="margin:-4px 0 2px">Plan: ${esc(d.plan)}</div>`;
   for(const win of [d.primary_window, d.secondary_window]){
     if(!win) continue;
     const s=String(win.resets_in||"");
@@ -275,7 +284,7 @@ function renderCodex(d){
 function renderGemini(d){
   if(d.error) return errBody(d);
   let h=staleNote(d);
-  if(d.subscription_tier) h+=`<div class="hint" style="margin:-4px 0 2px">Tier: ${d.subscription_tier}</div>`;
+  if(d.subscription_tier) h+=`<div class="hint" style="margin:-4px 0 2px">Tier: ${esc(d.subscription_tier)}</div>`;
   if(Array.isArray(d.models)){
     for(const m of d.models.slice(0,6)){
       let reset=null;
@@ -293,7 +302,7 @@ function staleNote(d){
   return d.stale ? `<div class="hint" style="margin:-2px 0 4px">showing cached data from ${d.stale_minutes||0} min ago (live query failed, will retry)</div>` : "";
 }
 function errBody(d){
-  return `<div class="err">${d.error}</div>${d.hint?`<div class="hint">${d.hint}</div>`:""}`;
+  return `<div class="err">${esc(d.error)}</div>${d.hint?`<div class="hint">${esc(d.hint)}</div>`:""}`;
 }
 async function load(force){
   document.getElementById("meta").textContent = "Refreshing…";
@@ -324,7 +333,9 @@ setInterval(()=>load(false), 300000);
 
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
-        if self.path.startswith("/api/usage"):
+        if self.path.startswith("/health"):
+            self._send(200, "application/json", b'{"status":"ok"}')
+        elif self.path.startswith("/api/usage"):
             force = "refresh=1" in self.path
             body = json.dumps(collect(force)).encode()
             self._send(200, "application/json", body)
@@ -356,19 +367,8 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
 
-def lan_ip() -> str:
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("8.8.8.8", 80))
-        ip = s.getsockname()[0]
-        s.close()
-        return ip
-    except OSError:
-        return "127.0.0.1"
-
-
 if __name__ == "__main__":
     print(f"\n  AI Usage dashboard started")
     print(f"  On this computer:  http://127.0.0.1:{PORT}")
-    print(f"  On your phone:     http://{lan_ip()}:{PORT}   (same Wi-Fi)\n")
-    ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()
+    print("  Phone access: configure private Tailscale Serve with install.sh\n")
+    ThreadingHTTPServer((BIND_HOST, PORT), Handler).serve_forever()
