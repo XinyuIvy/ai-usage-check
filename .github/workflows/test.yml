@@ -1,0 +1,27 @@
+name: test
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Check Python
+        run: |
+          python -m py_compile server.py
+          python -m unittest discover -s tests
+      - name: Check shell
+        run: bash -n install.sh bin/ai-usage-check scripts/install_widget.sh uninstall.sh
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Check JavaScript
+        run: |
+          node --input-type=module --check < scripts/scriptable_widget.js
+          node --input-type=module --check < scripts/scriptable_loader.js

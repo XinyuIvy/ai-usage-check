@@ -1,0 +1,6 @@
+__pycache__/
+*.py[cod]
+cclimits.py
+.DS_Store
+*.log
+
