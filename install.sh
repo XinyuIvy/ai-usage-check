@@ -11,15 +11,33 @@ SERVICE_PLIST="$PLIST_DIR/com.aiusage.dashboard.plist"
 UPDATE_PLIST="$PLIST_DIR/com.aiusage.update.plist"
 PORT="${AI_USAGE_PORT:-8899}"
 SOURCE_DIR=""
+SOURCE_WAS_EXPLICIT=0
 
 if [ "${1:-}" = "--source" ]; then
   SOURCE_DIR="${2:?--source requires a directory}"
-else
+  SOURCE_WAS_EXPLICIT=1
+elif [ -n "${BASH_SOURCE[0]:-}" ] && [ -f "${BASH_SOURCE[0]}" ]; then
   SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || true)"
+else
+  # A script received through stdin has no reliable adjacent project directory.
+  SOURCE_DIR=""
 fi
 
-# When piped from curl there are no adjacent project files, so fetch a clean release copy.
-if [ ! -f "$SOURCE_DIR/server.py" ]; then
+has_complete_source() {
+  [ -n "${1:-}" ] && \
+    [ -f "$1/server.py" ] && \
+    [ -f "$1/bin/ai-usage-check" ] && \
+    [ -f "$1/scripts/install_widget.sh" ] && \
+    [ -f "$1/uninstall.sh" ]
+}
+
+# A piped installer has no adjacent files, so always fetch a clean release copy.
+if ! has_complete_source "$SOURCE_DIR"; then
+  if [ "$SOURCE_WAS_EXPLICIT" = "1" ]; then
+    echo "The installation source is incomplete: $SOURCE_DIR"
+    echo "Expected server.py, bin/ai-usage-check, scripts/install_widget.sh, and uninstall.sh."
+    exit 1
+  fi
   temp_dir="$(mktemp -d)"
   trap 'rm -rf "$temp_dir"' EXIT
   echo "Downloading AI Usage Dashboard ..."
@@ -40,6 +58,11 @@ echo "Installing to $APP_DIR"
 mkdir -p "$APP_DIR" "$BIN_DIR" "$PLIST_DIR"
 if [ "$SOURCE_DIR" != "$APP_DIR" ]; then
   tar -C "$SOURCE_DIR" --exclude=.git --exclude=cclimits.py -cf - . | tar -C "$APP_DIR" -xf -
+fi
+
+if ! has_complete_source "$APP_DIR"; then
+  echo "Installation failed because required application files are missing from $APP_DIR."
+  exit 1
 fi
 
 # Keep the collector local. Existing copies are preserved during normal reinstalls.
