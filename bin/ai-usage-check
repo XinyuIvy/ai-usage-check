@@ -5,6 +5,7 @@ set -euo pipefail
 APP_DIR="${AI_USAGE_HOME:-$HOME/.local/share/ai-usage-check}"
 PLIST="$HOME/Library/LaunchAgents/com.aiusage.dashboard.plist"
 PORT="${AI_USAGE_PORT:-8899}"
+TAILSCALE_TIMEOUT="${AI_USAGE_TAILSCALE_TIMEOUT:-8}"
 
 usage() {
   echo "Usage: ai-usage-check {status|doctor|open|restart|update|widget|logs|uninstall}"
@@ -16,7 +17,7 @@ service_running() {
 
 server_url() {
   if command -v tailscale >/dev/null 2>&1; then
-    tailscale status --json 2>/dev/null | python3 -c '
+    run_tailscale status --json 2>/dev/null | python3 -c '
 import json,sys
 try:
  d=json.load(sys.stdin)
@@ -25,6 +26,10 @@ try:
 except Exception: print("")
 '
   fi
+}
+
+run_tailscale() {
+  python3 "$APP_DIR/scripts/run_with_timeout.py" "$TAILSCALE_TIMEOUT" tailscale "$@"
 }
 
 case "${1:-}" in
@@ -40,7 +45,7 @@ case "${1:-}" in
     check test -f "$PLIST"
     check service_running
     check command -v tailscale
-    check tailscale status
+    check run_tailscale status
     if service_running; then
       curl -fsS --max-time 10 "http://127.0.0.1:$PORT/api/usage" | python3 -c '
 import json,sys

@@ -4,6 +4,7 @@ set -euo pipefail
 
 APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SCRIPTABLE_DIR="$HOME/Library/Mobile Documents/iCloud~dk~simonbs~Scriptable/Documents"
+TAILSCALE_TIMEOUT="${AI_USAGE_TAILSCALE_TIMEOUT:-8}"
 
 if [ ! -d "$SCRIPTABLE_DIR" ]; then
   echo "Open Scriptable once on your iPhone with iCloud enabled, then run: ai-usage-check widget"
@@ -13,17 +14,19 @@ fi
 
 url=""
 if command -v tailscale >/dev/null 2>&1; then
-  url="$(tailscale status --json 2>/dev/null | python3 -c '
+  url="$(python3 "$APP_DIR/scripts/run_with_timeout.py" "$TAILSCALE_TIMEOUT" \
+    tailscale status --json 2>/dev/null | python3 -c '
 import json,sys
 try:
  name=json.load(sys.stdin).get("Self", {}).get("DNSName", "").rstrip(".")
  print("https://" + name if name else "")
 except Exception: print("")
-')"
+' || true)"
 fi
 
 if [ -z "$url" ]; then
-  echo "Tailscale Serve is not ready. Run: tailscale serve --bg 8899"
+  echo "Tailscale is not ready or did not respond within ${TAILSCALE_TIMEOUT}s."
+  echo "Open Tailscale, confirm it is connected, then run: ai-usage-check widget"
   exit 1
 fi
 

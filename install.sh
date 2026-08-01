@@ -12,6 +12,7 @@ UPDATE_PLIST="$PLIST_DIR/com.aiusage.update.plist"
 PORT="${AI_USAGE_PORT:-8899}"
 SOURCE_DIR=""
 SOURCE_WAS_EXPLICIT=0
+TAILSCALE_TIMEOUT="${AI_USAGE_TAILSCALE_TIMEOUT:-8}"
 
 if [ "${1:-}" = "--source" ]; then
   SOURCE_DIR="${2:?--source requires a directory}"
@@ -28,6 +29,7 @@ has_complete_source() {
     [ -f "$1/server.py" ] && \
     [ -f "$1/bin/ai-usage-check" ] && \
     [ -f "$1/scripts/install_widget.sh" ] && \
+    [ -f "$1/scripts/run_with_timeout.py" ] && \
     [ -f "$1/uninstall.sh" ]
 }
 
@@ -35,7 +37,7 @@ has_complete_source() {
 if ! has_complete_source "$SOURCE_DIR"; then
   if [ "$SOURCE_WAS_EXPLICIT" = "1" ]; then
     echo "The installation source is incomplete: $SOURCE_DIR"
-    echo "Expected server.py, bin/ai-usage-check, scripts/install_widget.sh, and uninstall.sh."
+    echo "Expected the server, manager, widget installer, timeout helper, and uninstaller."
     exit 1
   fi
   temp_dir="$(mktemp -d)"
@@ -110,9 +112,24 @@ fi
 
 sleep 2
 phone_url=""
-if command -v tailscale >/dev/null 2>&1 && tailscale status >/dev/null 2>&1; then
-  serve_output="$(tailscale serve --bg "$PORT" 2>&1 || true)"
-  phone_url="$(tailscale status --json 2>/dev/null | python3 -c '
+tailscale_status=""
+tailscale_serve_ready=0
+run_tailscale() {
+  python3 "$APP_DIR/scripts/run_with_timeout.py" "$TAILSCALE_TIMEOUT" tailscale "$@"
+}
+if command -v tailscale >/dev/null 2>&1; then
+  if tailscale_status="$(run_tailscale status --json 2>/dev/null)"; then
+    if serve_output="$(run_tailscale serve --bg "$PORT" 2>&1)"; then
+      tailscale_serve_ready=1
+    else
+      echo "Tailscale Serve was not configured automatically; installation will continue."
+    fi
+  else
+    echo "Tailscale did not respond within ${TAILSCALE_TIMEOUT}s; installation will continue."
+  fi
+fi
+if [ "$tailscale_serve_ready" = "1" ] && [ -n "$tailscale_status" ]; then
+  phone_url="$(printf '%s' "$tailscale_status" | python3 -c '
 import json,sys
 try:
  name=json.load(sys.stdin).get("Self", {}).get("DNSName", "").rstrip(".")
