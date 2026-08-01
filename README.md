@@ -4,7 +4,7 @@ See your **Claude**, **Codex/ChatGPT**, and **Gemini (Antigravity CLI)** quota �
 
 It works by reading the login credentials already saved on your computer by the `claude`, `codex`, and `agy` (Antigravity) CLIs, and querying each provider's (undocumented) usage API through the open-source [cclimits](https://github.com/cruzanstx/cclimits) tool. A small local server then serves that data to a phone-friendly web page, and a set of ready-made widgets render it.
 
-> **Privacy note:** everything runs locally on your machine. No credentials or usage data are sent anywhere except the official Claude / OpenAI / Google endpoints used to check your own quota.
+> **Privacy note:** credentials remain on your Mac and are sent only to the official Claude / OpenAI / Google endpoints used to check your quota. The iPhone widget stores the last successful quota response in its private Scriptable iCloud folder so it can keep displaying that snapshot while the Mac is off.
 
 ## What you get
 
@@ -13,7 +13,7 @@ It works by reading the login credentials already saved on your computer by the 
 - 🖼️ A **desktop card** (macOS, via [Übersicht](https://tracesof.net/uebersicht/))
 - 🌐 A plain **web dashboard**, installable as a home-screen "app" (PWA) on any phone
 
-All four read from the same local server, so they always agree.
+All views use the same local server while the Mac is online. The iPhone widget can also show its last successful snapshot while the Mac is offline.
 
 ## Requirements
 
@@ -57,7 +57,7 @@ Cards refresh automatically; no need to restart the server after logging in.
 3. Run the script once inside Scriptable and enter the stable Tailscale URL printed by `install.sh`
 4. Long-press your home screen → add widget → Scriptable → Medium or Large → pick your script
 
-The URL is saved in the iPhone Keychain and reused automatically. Tapping the widget opens the full dashboard. You do not need to scan a QR code again or edit the script after changing Wi-Fi.
+The URL is saved in the iPhone Keychain and reused automatically. Each successful refresh also saves a quota snapshot in Scriptable's private iCloud folder. If the Mac is off or unreachable, the widget keeps showing that snapshot and labels it `cached` with its age. Tapping the widget opens the live dashboard when the Mac is available. You do not need to scan a QR code again or edit the script after changing Wi-Fi.
 
 ### Menu bar (macOS + SwiftBar)
 
@@ -79,7 +79,7 @@ Just open `http://127.0.0.1:8899` (or your phone-accessible address) in a browse
 
 Since the server only runs on your machine, your phone needs to reach that machine's IP — which normally means "same Wi-Fi." Two ways around that:
 
-- **[Tailscale](https://tailscale.com)** (recommended, free): install it on the computer and phone and log in with the same account once. The computer gets a stable `100.x.x.x` address that works across home Wi-Fi, other Wi-Fi networks, and cellular data (as long as the computer is on). `install.sh` detects and prints this stable URL; enter it once when Scriptable first runs. No repeated QR scan or IP update is needed.
+- **[Tailscale](https://tailscale.com)** (recommended, free): install it on the computer and phone and log in with the same account once. The computer gets a stable `100.x.x.x` address that works across home Wi-Fi, other Wi-Fi networks, and cellular data. `install.sh` detects and prints this stable URL; enter it once when Scriptable first runs. When the Mac is on, the widget displays live data. When it is off, the widget displays the last saved snapshot. No repeated QR scan or IP update is needed.
 - **DHCP reservation**: if you only ever move between a couple of known Wi-Fi networks, give your computer a fixed IP on each router instead.
 
 ## How the data flows
@@ -95,6 +95,8 @@ claude / codex / agy CLI  ->  saves login credentials locally
                               results, serves JSON + a web page
                 |
    phone / menu bar / desktop widgets  ->  poll server.py and render
+                |
+     Scriptable iCloud snapshot         ->  phone fallback while Mac is off
 ```
 
 ## Troubleshooting
@@ -102,6 +104,8 @@ claude / codex / agy CLI  ->  saves login credentials locally
 - **A card shows "No credentials found"** — you haven't logged into that CLI on this machine yet (see above)
 - **A card shows "Token expired"** — re-run the login command for that provider
 - **Occasional `HTTP 429` briefly, then it clears itself** — the usage API is rate-limited; the server caches the last successful result and serves that instead of an error once it has one
+- **Widget says `cached`** — the Mac or Tailscale is unavailable. The displayed numbers are the last successful snapshot; the age beside `cached` tells you how old they are
+- **No snapshot is available while the Mac is off** — turn on the Mac and run the Scriptable widget once while it can reach the dashboard
 - **Background service fails silently after install** — check `/tmp/ai-usage-dashboard.err`. The most common cause is the repo living under `~/Documents` (see the warning above) or launchd invoking an old system Python — the `install.sh` script and `server.py` are written to be safe against both, but if you edit `server.py` keep the `from __future__ import annotations` line at the top
 
 ## Uninstall
