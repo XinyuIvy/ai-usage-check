@@ -3,7 +3,7 @@
 //        2) Create a new script and paste this entire file
 //        3) Run the script once and enter the stable Tailscale URL printed by install.sh
 //        4) Long-press home screen -> add widget -> Scriptable -> Medium or Large
-//        5) Select this script. The saved URL is reused automatically.
+//        5) Select this script. Live data is cached for display while the Mac is off.
 
 const SERVER_KEY = "ai-usage-dashboard-server";
 
@@ -35,16 +35,46 @@ async function configuredServer() {
 
 const SERVER = await configuredServer();
 
-// ---------- fetch ----------
-let data = null, offline = false;
+// ---------- fetch + iCloud-backed fallback ----------
+const SNAPSHOT_NAME = "ai_usage_snapshot.json";
+const snapshotFM = FileManager.iCloud();
+const snapshotPath = snapshotFM.joinPath(snapshotFM.documentsDirectory(), SNAPSHOT_NAME);
+
+async function saveSnapshot(value) {
+  try {
+    snapshotFM.writeString(snapshotPath, JSON.stringify(value));
+  } catch (e) {
+    // A live widget still works if iCloud storage is temporarily unavailable.
+  }
+}
+
+async function loadSnapshot() {
+  try {
+    if (!snapshotFM.fileExists(snapshotPath)) return null;
+    await snapshotFM.downloadFileFromiCloud(snapshotPath);
+    const value = JSON.parse(snapshotFM.readString(snapshotPath));
+    return value && !value._error ? value : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+let data = null;
+let source = "none";
 try {
   if (!SERVER) throw new Error("Server is not configured");
   const req = new Request(SERVER + "/api/usage");
   req.timeoutInterval = 15;
-  data = await req.loadJSON();
+  const live = await req.loadJSON();
+  if (!live || live._error) throw new Error(live?._error || "No live data");
+  data = live;
+  source = "live";
+  await saveSnapshot(live);
 } catch (e) {
-  offline = true;
+  data = await loadSnapshot();
+  source = data ? "cached" : "none";
 }
+const cached = source === "cached";
 
 // ---------- helpers ----------
 const C = {
@@ -164,17 +194,29 @@ t.textColor = C.text;
 title.addSpacer();
 const df = new DateFormatter();
 df.dateFormat = "HH:mm";
-const ts = title.addText(offline ? "offline" : "updated " + df.string(new Date()));
+const collectedAt = data?._collected_at ? new Date(data._collected_at * 1000) : null;
+const ageMinutes = collectedAt ? Math.max(0, Math.floor((Date.now() - collectedAt) / 60000)) : null;
+const ageText = ageMinutes == null ? "unknown age"
+  : ageMinutes < 1 ? "just now"
+  : ageMinutes < 60 ? ageMinutes + "m ago"
+  : ageMinutes < 1440 ? Math.floor(ageMinutes / 60) + "h ago"
+  : Math.floor(ageMinutes / 1440) + "d ago";
+const statusText = cached
+  ? "cached · " + ageText
+  : source === "live"
+    ? "updated " + df.string(collectedAt || new Date())
+    : "offline";
+const ts = title.addText(statusText);
 ts.font = Font.systemFont(10);
-ts.textColor = offline ? C.bad : C.muted;
+ts.textColor = cached ? C.warn : source === "live" ? C.muted : C.bad;
 
-if (offline || !data) {
+if (!data) {
   w.addSpacer(10);
   const e = w.addText("Can't reach the dashboard on your computer");
   e.font = Font.systemFont(12);
   e.textColor = C.warn;
   const h = w.addText(SERVER
-    ? "Check that the computer and Tailscale are online"
+    ? "No saved snapshot yet. Turn on the Mac and refresh once."
     : "Open this script once in Scriptable to save the Tailscale URL");
   h.font = Font.systemFont(10);
   h.textColor = C.muted;
